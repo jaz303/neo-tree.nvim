@@ -64,15 +64,17 @@ M.show = function(state, title, prefix_key)
     ---@type neotree.State.ResolvedMapping
     local value = state.resolved_mappings[key]
       or { text = "<error mapping for key " .. key .. ">", handler = function() end }
-    local nline = NuiLine()
-    nline:append(string.format(" %14s", key_minus_prefix(key, prefix_key)), highlights.FILTER_TERM)
-    nline:append(" -> ", highlights.DIM_TEXT)
-    nline:append(value.text, highlights.NORMAL)
-    local line = nline:content()
-    if #line > max_width then
-      max_width = #line
+    if value.text ~= "<hidden>" then
+      local nline = NuiLine()
+      nline:append(string.format(" %14s", key_minus_prefix(key, prefix_key)), highlights.FILTER_TERM)
+      nline:append(" -> ", highlights.DIM_TEXT)
+      nline:append(value.text, highlights.NORMAL)
+      local line = nline:content()
+      if #line > max_width then
+        max_width = #line
+      end
+      table.insert(lines, nline)
     end
-    table.insert(lines, nline)
   end
 
   local width = math.min(60, max_width + 1)
