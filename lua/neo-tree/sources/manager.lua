@@ -47,7 +47,7 @@ end
 ---@field win_width integer
 ---@field last_user_width integer
 
----@alias neotree.State.Position "top"|"bottom"|"left"|"right"|"current"|"float"
+---@alias neotree.State.CurrentPosition "top"|"bottom"|"left"|"right"|"current"|"float"
 
 ---@alias neotree.Internal.SortFieldProvider fun(node: NuiTree.Node):any
 
@@ -57,11 +57,11 @@ end
 ---@field id integer
 ---@field bufnr integer?
 ---@field dirty boolean
----@field position table
+---@field position neotree.State.Position
 ---@field git_base string
 ---@field sort table
 ---@field clipboard table
----@field current_position neotree.State.Position?
+---@field current_position neotree.State.CurrentPosition?
 ---@field disposed boolean?
 ---@field winid integer?
 ---@field path string?
@@ -70,6 +70,7 @@ end
 ---private-ish
 ---@field orig_tree NuiTree?
 ---@field _ready boolean?
+---@field _in_pre_render boolean?
 ---@field loading boolean?
 ---window
 ---@field window neotree.State.Window?
@@ -230,24 +231,35 @@ M.get_state_for_window = function(winid)
   end
 end
 
+---Get the path to reveal in the file tree.
+---@param include_terminals boolean?
+---@return string? path
 M.get_path_to_reveal = function(include_terminals)
   local win_id = vim.api.nvim_get_current_win()
-  local cfg = vim.api.nvim_win_get_config(win_id)
-  if cfg.relative > "" or cfg.external then
+  if utils.is_floating(win_id) then
     -- floating window, ignore
     return nil
   end
+
   if vim.bo.filetype == "neo-tree" then
     return nil
   end
-  local path = vim.fn.expand("%:p")
-  if not utils.truthy(path) then
+
+  local buf_relpath = vim.fn.expand("%")
+  local abspath = vim.api.nvim_buf_get_name(0)
+  if not utils.truthy(buf_relpath) or not utils.truthy(abspath) then
     return nil
   end
-  if not include_terminals and path:match("term://") then
+
+  if not include_terminals and abspath:match("term://") then
     return nil
   end
-  return path
+
+  if buf_relpath == abspath then
+    return abspath
+  end
+
+  return utils.path_join(vim.fn.getcwd(), utils.normalize_path(buf_relpath))
 end
 
 ---@param source_name string
@@ -260,7 +272,7 @@ M.subscribe = function(source_name, event)
   if not utils.truthy(event.id) then
     event.id = sd.name .. "." .. event.event
   end
-  log.trace("subscribing to event: " .. event.id)
+  log.trace("subscribing to event:" .. event.id)
   sd.subscriptions[event] = true
   events.subscribe(event)
 end
@@ -316,11 +328,11 @@ M.close_all = function(at_position)
       if state.tabid == tabid then
         if at_position then
           if state.current_position == at_position then
-            log.trace("Closing " .. source_name .. " at position " .. at_position)
+            log.trace("Closing", source_name, "at position", at_position)
             pcall(renderer.close, state)
           end
         else
-          log.trace("Closing " .. source_name)
+          log.trace("Closing", source_name)
           pcall(renderer.close, state)
         end
       end
@@ -333,7 +345,7 @@ M.close_all_except = function(except_source_name)
   for source_name, _ in pairs(source_data) do
     M._for_each_state(source_name, function(state)
       if state.tabid == tabid and source_name ~= except_source_name then
-        log.trace("Closing " .. source_name)
+        log.trace("Closing ", source_name)
         pcall(renderer.close, state)
       end
     end)
@@ -479,7 +491,7 @@ M.dispose = function(source_name, tabid)
     local state = all_states[i]
     if source_name == nil or state.name == source_name then
       if not tabid or tabid == state.tabid then
-        log.trace(state.name, " disposing of tab: ", tabid)
+        log.trace(state.name, "disposing of tab:", tabid)
         dispose_state(state)
         table.remove(all_states, i)
       end
@@ -496,7 +508,7 @@ M.dispose_tab = function(tabid)
   for i = #all_states, 1, -1 do
     local state = all_states[i]
     if tabid == state.tabid then
-      log.trace(state.name, " disposing of tab: ", tabid, state.name)
+      log.trace(state.name, "disposing of tab:", tabid, state.name)
       dispose_state(state)
       table.remove(all_states, i)
     end
@@ -509,7 +521,7 @@ M.dispose_invalid_tabs = function()
     local state = all_states[i]
     -- if not valid_tabs[state.tabid] then
     if not vim.api.nvim_tabpage_is_valid(state.tabid) then
-      log.trace(state.name, " disposing of tab: ", state.tabid, state.name)
+      log.trace(state.name, "disposing of tab:", state.tabid, state.name)
       dispose_state(state)
       table.remove(all_states, i)
     end
@@ -523,7 +535,7 @@ M.dispose_window = function(winid)
   for i = #all_states, 1, -1 do
     local state = all_states[i]
     if state.id == winid then
-      log.trace(state.name, " disposing of window: ", winid, state.name)
+      log.trace(state.name, "disposing of window:", winid, state.name)
       dispose_state(state)
       table.remove(all_states, i)
     end
@@ -610,6 +622,8 @@ M.redraw = function(source_name)
 end
 
 ---Refreshes the tree by scanning the filesystem again.
+---@param source_name string
+---@param callback function?
 M.refresh = function(source_name, callback)
   if type(callback) ~= "function" then
     callback = nil
@@ -750,7 +764,7 @@ end
 ---@param global_config neotree.Config.Base Global configuration table, shared between all sources.
 ---@param module neotree.Source Module containing the source's code.
 M.setup = function(source_name, config, global_config, module)
-  log.debug(source_name, " setup ", config)
+  log.debug(source_name, "setup", config)
   M.unsubscribe_all(source_name)
   M.set_default_config(source_name, config)
   if module == nil then

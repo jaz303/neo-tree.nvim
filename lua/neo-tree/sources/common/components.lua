@@ -337,6 +337,7 @@ end
 
 ---@class neotree.Component.Common.FilteredBy
 ---@field [1] "filtered_by"?
+---@param node neotree.FileNode
 M.filtered_by = function(_, node, state)
   local fby = node.filtered_by
   if not state.filtered_items or type(fby) ~= "table" then
@@ -363,6 +364,12 @@ M.filtered_by = function(_, node, state)
         text = "(dotfile)",
         highlight = highlights.DOTFILE,
       }
+    elseif fby.ignored then
+      local _, fname = utils.split_path(fby.ignore_file)
+      return {
+        text = ("(ignored by %s)"):format(fname),
+        highlight = highlights.IGNORED,
+      }
     elseif fby.hidden then
       return {
         text = "(hidden)",
@@ -381,6 +388,7 @@ end
 ---@field folder_empty_open string The icon to display to represent an empty but open folder.
 ---@field folder_open string The icon to display for an open folder.
 ---@field folder_closed string The icon to display for a closed folder.
+---@field use_filtered_colors boolean Whether to use the same highlight as filtered_by when the item is filtered.
 ---@field provider neotree.IconProvider?
 
 ---@param config neotree.Component.Common.Icon
@@ -405,10 +413,11 @@ M.icon = function(config, node, state)
     icon = config.provider(icon, node, state) or icon
   end
 
-  local filtered_by = M.filtered_by(config, node, state)
-
   icon.text = icon.text .. " " -- add padding
-  icon.highlight = filtered_by.highlight or icon.highlight --  prioritize filtered highlighting
+  if config.use_filtered_colors then
+    local filtered_by = M.filtered_by(config, node, state)
+    icon.highlight = filtered_by.highlight or icon.highlight --  prioritize filtered highlighting
+  end
 
   return icon
 end
@@ -436,6 +445,7 @@ end
 ---@field [1] "name"?
 ---@field trailing_slash boolean?
 ---@field use_git_status_colors boolean?
+---@field use_filtered_colors boolean? Whether to use the same highlight as filtered_by when the item is filtered.
 ---@field highlight_opened_files boolean|"all"?
 ---@field right_padding integer?
 
@@ -457,8 +467,10 @@ M.name = function(config, node, state)
       text = text .. "  " .. icon
     end
   else
-    local filtered_by = M.filtered_by(config, node, state)
-    highlight = filtered_by.highlight or highlight
+    if config.use_filtered_colors then
+      local filtered_by = M.filtered_by(config, node, state)
+      highlight = filtered_by.highlight or highlight
+    end
     if config.use_git_status_colors then
       local git_status = state.components.git_status({}, node, state)
       if git_status and git_status.highlight then
@@ -686,14 +698,14 @@ end
 
 ---@param config neotree.Component.Common.SymlinkTarget
 M.symlink_target = function(config, node, _)
-  if node.is_link then
-    return {
-      text = string.format(config.text_format or "-> %s", node.link_to),
-      highlight = config.highlight or highlights.SYMBOLIC_LINK_TARGET,
-    }
-  else
+  if not node.is_link then
     return {}
   end
+
+  return {
+    text = (config.text_format or "-> %s"):format(node.link_to),
+    highlight = config.highlight or highlights.SYMBOLIC_LINK_TARGET,
+  }
 end
 
 ---@class (exact) neotree.Component.Common.Type : neotree.Component

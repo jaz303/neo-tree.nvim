@@ -9,5 +9,10 @@ vim.opt.rtp = {
   vim.env.VIMRUNTIME,
 }
 
+vim.env.NEOTREE_TESTING = "true"
+
 -- need this for tests to work
 vim.cmd.source(root_dir .. "/plugin/neo-tree.lua")
+
+vim.g.mapleader = " "
+vim.keymap.set("n", "<Leader>e", "<Cmd>Neotree<CR>")

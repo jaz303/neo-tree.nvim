@@ -64,7 +64,7 @@ local follow_internal = function(callback, force_show, async)
     return false
   end
 
-  log.debug("follow file: ", path_to_reveal)
+  log.debug("follow file:", path_to_reveal)
   local show_only_explicitly_opened = function()
     state.explicitly_opened_nodes = state.explicitly_opened_nodes or {}
     local expanded_nodes = renderer.get_expanded_nodes(state.tree)
@@ -133,7 +133,7 @@ M._navigate_internal = function(state, path, path_to_reveal, callback, async)
   local orig_path = path
   local backed_out = false
   while not fs_stat(path) do
-    log.debug(("navigate_internal: path %s didn't exist, going up a directory"):format(path))
+    log.debug("navigate_internal: path", path, "didn't exist, going up a directory")
     backed_out = true
     local parent, _ = utils.split_path(path)
     if not parent then
@@ -143,11 +143,11 @@ M._navigate_internal = function(state, path, path_to_reveal, callback, async)
   end
 
   if backed_out then
-    log.warn(("Root path %s doesn't exist, backing out to %s"):format(orig_path, path))
+    log.at.warn.format("Root path %s doesn't exist, backing out to %s", orig_path, path)
   end
 
   if path ~= state.path then
-    log.debug("navigate_internal: path changed from ", state.path, " to ", path)
+    log.debug("navigate_internal: path changed from", state.path, "to", path)
     state.path = path
     path_changed = true
   end
@@ -171,7 +171,7 @@ M._navigate_internal = function(state, path, path_to_reveal, callback, async)
       if success then
         log.trace("navigate_internal: position saved")
       else
-        log.trace("navigate_internal: FAILED to save position: ", msg)
+        log.trace("navigate_internal: FAILED to save position:", msg)
       end
       fs_scan.get_items(state, nil, nil, callback, async)
     end
@@ -292,6 +292,8 @@ end
 ---@field show_hidden_count boolean?
 ---@field hide_dotfiles boolean?
 ---@field hide_gitignored boolean?
+---@field hide_ignored boolean?
+---@field ignore_files string[]?
 ---@field hide_hidden boolean?
 ---@field hide_by_name string[]?
 ---@field hide_by_pattern string[]?
@@ -351,19 +353,22 @@ M.setup = function(config, global_config)
   config.filtered_items = config.filtered_items or {}
   config.enable_git_status = config.enable_git_status or global_config.enable_git_status
 
-  for _, key in ipairs({ "hide_by_pattern", "always_show_by_pattern", "never_show_by_pattern" }) do
-    local list = config.filtered_items[key]
-    if type(list) == "table" then
+  local filtered = config.filtered_items
+  if filtered then
+    for _, list in ipairs({
+      filtered.hide_by_pattern or {},
+      filtered.always_show_by_pattern or {},
+      filtered.never_show_by_pattern or {},
+    }) do
       for i, pattern in ipairs(list) do
         list[i] = glob.globtopattern(pattern)
       end
     end
-  end
-
-  for _, key in ipairs({ "hide_by_name", "always_show", "never_show" }) do
-    local list = config.filtered_items[key]
-    if type(list) == "table" then
-      config.filtered_items[key] = utils.list_to_dict(list)
+    for _, key in ipairs({ "hide_by_name", "always_show", "never_show" }) do
+      local list = filtered[key]
+      if type(list) == "table" then
+        filtered[key] = utils.list_to_dict(list)
+      end
     end
   end
 
@@ -525,7 +530,7 @@ M.prefetcher = {
     if node.type ~= "directory" then
       return
     end
-    log.debug("Running fs prefetch for: " .. node:get_id())
+    log.debug("Running fs prefetch for:" .. node:get_id())
     fs_scan.get_dir_items_async(state, node:get_id(), true)
   end,
   should_prefetch = function(node)

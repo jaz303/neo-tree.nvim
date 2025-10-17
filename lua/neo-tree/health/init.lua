@@ -1,56 +1,59 @@
 local typecheck = require("neo-tree.health.typecheck")
-local M = {}
 local health = vim.health
 
-local function check_dependencies()
-  local devicons_ok = pcall(require, "nvim-web-devicons")
-  if devicons_ok then
-    health.ok("nvim-web-devicons is installed")
-  else
-    health.info("nvim-web-devicons not installed")
+local M = {}
+
+---@param modname string
+---@param repo string
+---@param optional boolean?
+local check_dependency = function(modname, repo, optional)
+  local m = pcall(require, modname)
+  if not m then
+    local errmsg = repo .. " is not installed"
+    if optional then
+      health.info(errmsg)
+    else
+      health.error(errmsg)
+    end
+    return
   end
 
-  local plenary_ok = pcall(require, "plenary")
-  if plenary_ok then
-    health.ok("plenary.nvim is installed")
-  else
-    health.error("plenary.nvim is not installed")
-  end
+  health.ok(repo .. " is installed")
+end
 
-  local nui_ok = pcall(require, "nui.tree")
-  if nui_ok then
-    health.ok("nui.nvim is installed")
-  else
-    health.error("nui.nvim not installed")
-  end
+function M.check()
+  health.start("Dependencies")
+  check_dependency("plenary", "nvim-lua/plenary.nvim")
+  check_dependency("nui.tree", "MunifTanjim/nui.nvim")
 
-  health.info("Optional dependencies for preview image support (only need one):")
-  -- optional
-  local snacks_ok = pcall(require, "snacks.image")
-  if snacks_ok then
-    health.ok("snacks.image is installed")
-  else
-    health.info("nui.nvim not installed")
-  end
+  health.start("Optional icons")
+  check_dependency("nvim-web-devicons", "nvim-tree/nvim-web-devicons", true)
 
-  local image_ok = pcall(require, "image")
-  if image_ok then
-    health.ok("image.nvim is installed")
-  else
-    health.info("nui.nvim not installed")
-  end
+  health.start("Optional preview image support (only need one):")
+  check_dependency("snacks.image", "folke/snacks.nvim", true)
+  check_dependency("image", "3rd/image.nvim", true)
+
+  health.start("Optional LSP integration for commands (like copy/delete/move/etc.)")
+  check_dependency("lsp-file-operations", "antosha417/nvim-lsp-file-operations", true)
+
+  health.start("Optional window picker (for _with_window_picker commands)")
+  check_dependency("window-picker", "s1n7ax/nvim-window-picker", true)
+
+  health.start("Configuration")
+  local config = require("neo-tree").ensure_config()
+  M.check_config(config)
 end
 
 local validate = typecheck.validate
 
 ---@module "neo-tree.types.config"
 ---@param config neotree.Config.Base
+---@return boolean
 function M.check_config(config)
   ---@type [string, string?][]
   local errors = {}
-  local start = vim.uv.hrtime()
   local verbose = vim.o.verbose > 0
-  local matched, missed = validate(
+  local valid, missed = validate(
     "config",
     config,
     function(cfg)
@@ -65,6 +68,9 @@ function M.check_config(config)
             end
           end
         end,
+        ---@generic T
+        ---@param literals T[]
+        ---@return fun(a: T):boolean
         literal = function(literals)
           return function(value)
             return vim.tbl_contains(literals, value),
@@ -73,6 +79,20 @@ function M.check_config(config)
         end,
       }
       local schema = {
+        LogLevel = v.literal({
+          "trace",
+          "debug",
+          "info",
+          "warn",
+          "error",
+          "fatal",
+          vim.log.levels.TRACE,
+          vim.log.levels.DEBUG,
+          vim.log.levels.INFO,
+          vim.log.levels.WARN,
+          vim.log.levels.ERROR,
+          vim.log.levels.ERROR + 1,
+        }),
         Filesystem = {
           ---@param follow_current_file neotree.Config.Filesystem.FollowCurrentFile
           FollowCurrentFile = function(follow_current_file)
@@ -101,6 +121,17 @@ function M.check_config(config)
         },
         Renderers = v.array("table"),
       }
+      ---@param log_level neotree.Logger.Config.Level
+      schema.ConfigLogLevel = function(log_level)
+        if type(log_level) == "table" then
+          return validate("log_level", log_level, function(ll)
+            validate("console", ll.console, schema.LogLevel)
+            validate("file", ll.file, schema.LogLevel)
+          end)
+        else
+          validate("log_level", log_level, schema.LogLevel)
+        end
+      end
 
       if not validate("config", cfg, "table") then
         health.error("Config does not exist")
@@ -126,12 +157,7 @@ function M.check_config(config)
       end)
       validate("hide_root_node", cfg.hide_root_node, "boolean")
       validate("retain_hidden_root_indent", cfg.retain_hidden_root_indent, "boolean")
-      validate(
-        "log_level",
-        cfg.log_level,
-        v.literal({ "trace", "debug", "info", "warn", "error", "fatal" }),
-        true
-      )
+      validate("log_level", cfg.log_level, schema.ConfigLogLevel, true)
       validate("log_to_file", cfg.log_to_file, { "boolean", "string" })
       validate("open_files_in_last_window", cfg.open_files_in_last_window, "boolean")
       validate(
@@ -159,7 +185,7 @@ function M.check_config(config)
         validate(
           "tabs_layout",
           ss.tabs_layout,
-          v.literal({ "equal", "start", "end", "center", "focus" })
+          v.literal({ "equal", "start", "end", "center", "active" })
         )
         validate("truncation_character", ss.truncation_character, "string", false)
         validate("tabs_min_width", ss.tabs_min_width, "number", true)
@@ -234,6 +260,7 @@ function M.check_config(config)
           validate("show_hidden_count", f.show_hidden_count, "boolean")
           validate("hide_dotfiles", f.hide_dotfiles, "boolean")
           validate("hide_gitignored", f.hide_gitignored, "boolean")
+          validate("hide_ignored", f.hide_ignored, "boolean")
           validate("hide_hidden", f.hide_hidden, "boolean")
           validate("hide_by_name", f.hide_by_name, v.array("string"))
           validate("hide_by_pattern", f.hide_by_pattern, v.array("string"))
@@ -294,7 +321,6 @@ function M.check_config(config)
     end,
     true
   )
-  local _end = vim.uv.hrtime()
 
   if #errors == 0 then
     health.ok("Configuration conforms to the neotree.Config.Base schema")
@@ -313,14 +339,7 @@ function M.check_config(config)
       end
     end
   end
-end
-
-function M.check()
-  health.start("Dependencies")
-  check_dependencies()
-  health.start("Configuration")
-  local config = require("neo-tree").ensure_config()
-  M.check_config(config)
+  return valid
 end
 
 return M

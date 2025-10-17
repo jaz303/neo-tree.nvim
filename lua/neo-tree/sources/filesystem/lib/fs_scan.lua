@@ -11,6 +11,7 @@ local fs_watch = require("neo-tree.sources.filesystem.lib.fs_watch")
 local git = require("neo-tree.git")
 local events = require("neo-tree.events")
 local async = require("plenary.async")
+local ignored = require("neo-tree.sources.filesystem.lib.ignored")
 
 local M = {}
 
@@ -42,7 +43,7 @@ local on_directory_loaded = function(context, dir_path)
         end
       end)
 
-      log.trace("Adding fs watcher for ", target_path)
+      log.trace("Adding fs watcher for", target_path)
       fs_watch.watch_folder(target_path, fs_watch_callback)
     end
   end
@@ -117,7 +118,7 @@ end
 local should_check_gitignore = function(context)
   local state = context.state
   if #context.all_items == 0 then
-    log.info("No items, skipping git ignored/status lookups")
+    log.debug("No items, skipping git ignored/status lookups")
     return false
   end
   if state.search_pattern and state.check_gitignore_in_search == false then
@@ -132,6 +133,7 @@ local should_check_gitignore = function(context)
   return true
 end
 
+---@param context neotree.sources.filesystem.Context
 local job_complete_async = function(context)
   local state = context.state
   local parent_id = context.parent_id
@@ -144,6 +146,8 @@ local job_complete_async = function(context)
   -- end
   if should_check_gitignore(context) then
     local mark_ignored_async = async.wrap(function(_state, _all_items, _callback)
+      ---lua-ls can't narrow this properly
+      ---@diagnostic disable-next-line: redundant-parameter
       git.mark_ignored(_state, _all_items, _callback)
     end, 3)
     local all_items = mark_ignored_async(state, context.all_items)
@@ -154,17 +158,23 @@ local job_complete_async = function(context)
       state.git_ignored = all_items
     end
   end
+
+  ignored.mark_ignored(state, context.all_items)
   return context
 end
 
+---@param context neotree.sources.filesystem.Context
 local job_complete = function(context)
   local state = context.state
   local parent_id = context.parent_id
 
   file_nesting.nest_items(context)
 
+  ignored.mark_ignored(state, context.all_items)
   if should_check_gitignore(context) then
     if require("neo-tree").config.git_status_async then
+      ---lua-ls can't narrow this properly
+      ---@diagnostic disable-next-line: redundant-parameter
       git.mark_ignored(state, context.all_items, function(all_items)
         if parent_id then
           vim.list_extend(state.git_ignored, all_items)
@@ -290,7 +300,7 @@ end
 
 --- async method
 local function scan_dir_async(context, path)
-  log.debug("scan_dir_async - start " .. path)
+  log.debug("scan_dir_async - start", path)
 
   local get_children = async.wrap(function(_path, callback)
     return get_children_async(_path, callback)
@@ -313,7 +323,7 @@ local function scan_dir_async(context, path)
   end
 
   process_node(context, path)
-  log.debug("scan_dir_async - finish " .. path)
+  log.debug("scan_dir_async - finish", path)
   return path
 end
 
@@ -321,7 +331,7 @@ end
 -- and adds them as items to render in the UI.
 ---@param context neotree.sources.filesystem.Context
 local function async_scan(context, path)
-  log.trace("async_scan: ", path)
+  log.trace("async_scan:", path)
   local scan_mode = require("neo-tree").config.filesystem.scan_mode
 
   if scan_mode == "deep" then
@@ -352,14 +362,14 @@ local function async_scan(context, path)
 
   -- from https://github.com/nvim-lua/plenary.nvim/blob/master/lua/plenary/scandir.lua
   local function read_dir(current_dir, ctx)
-    uv.fs_opendir(current_dir, function(err, dir)
-      if err then
-        log.error(current_dir, ": ", err)
+    uv.fs_opendir(current_dir, function(openerr, dir)
+      if openerr then
+        log.error(current_dir, ": ", openerr)
         return
       end
-      local function on_fs_readdir(err, entries)
-        if err then
-          log.error(current_dir, ": ", err)
+      local function on_fs_readdir(readerr, entries)
+        if readerr then
+          log.error(current_dir, ": ", readerr)
           return
         end
         if entries then
@@ -376,7 +386,7 @@ local function async_scan(context, path)
                 table.insert(ctx.paths_to_load, item.path)
               end
             else
-              log.error("error creating item for ", path)
+              log.error("Error creating item for ", path, ":", item)
             end
           end
 
@@ -418,7 +428,7 @@ end
 ---@param context neotree.sources.filesystem.Context
 ---@param path_to_scan string
 local function sync_scan(context, path_to_scan)
-  log.trace("sync_scan: ", path_to_scan)
+  log.trace("sync_scan:", path_to_scan)
   local scan_mode = require("neo-tree").config.filesystem.scan_mode
   if scan_mode == "deep" then
     for _, path in ipairs(context.paths_to_load) do
@@ -439,13 +449,13 @@ local function sync_scan(context, path_to_scan)
         for i, stat in ipairs(stats) do
           more = i == ENTRIES_BATCH_SIZE
           local path = utils.path_join(path_to_scan, stat.name)
-          local success, _ = pcall(file_items.create_item, context, path, stat.type)
+          local success, item = pcall(file_items.create_item, context, path, stat.type)
           if success then
             if context.recursive and stat.type == "directory" then
               table.insert(context.paths_to_load, path)
             end
           else
-            log.error("error creating item for ", path)
+            log.error("Error creating item for ", path, ":", item)
           end
         end
       until not more
@@ -555,7 +565,7 @@ local handle_refresh_or_up = function(context, async_dir_scan)
       local path_to_reveal_parts = utils.split(path_to_reveal, utils.path_separator)
       table.remove(path_to_reveal_parts) -- remove the file name
       -- add all parent folders to the list of paths to load
-      utils.reduce(path_to_reveal_parts, "", function(acc, part)
+      utils.reduce(path_to_reveal_parts, utils.abspath_prefix(path_to_reveal), function(acc, part)
         local current_path = utils.path_join(acc, part)
         if #current_path > #path then -- within current root
           table.insert(context.paths_to_load, current_path)
@@ -605,6 +615,7 @@ end
 ---@field is_a_never_show_file fun(filename: string?):boolean
 
 ---@class neotree.sources.filesystem.State : neotree.StateWithTree, neotree.Config.Filesystem
+---@field git_ignored neotree.FileItem[]
 ---@field path string
 
 ---@param state neotree.sources.filesystem.State
@@ -718,7 +729,7 @@ M.stop_watchers = function(state)
     end)
     fs_watch.unwatch_git_index(state.path, require("neo-tree").config.git_status_async)
     for _, folder in ipairs(loaded_folders) do
-      log.trace("Unwatching folder ", folder.path)
+      log.trace("Unwatching folder", folder.path)
       if folder.is_link then
         fs_watch.unwatch_folder(folder.link_to)
       else
@@ -727,9 +738,9 @@ M.stop_watchers = function(state)
     end
   else
     log.debug(
-      "Not unwatching folders... use_libuv_file_watcher is ",
+      "Not unwatching folders... use_libuv_file_watcher is",
       state.use_libuv_file_watcher,
-      " and state.tree is ",
+      " and state.tree is",
       utils.truthy(state.tree)
     )
   end

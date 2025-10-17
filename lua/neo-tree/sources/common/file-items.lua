@@ -99,7 +99,7 @@ local advanced_sort = function(tbl, state)
   deep_sort(tbl, sort_func, field_provider, direction)
 end
 
-local create_item, set_parents
+local set_parents
 
 ---@alias neotree.Filetype
 ---|"file"
@@ -115,8 +115,11 @@ local create_item, set_parents
 ---@field dotfiles boolean?
 ---@field hidden boolean?
 ---@field gitignored boolean?
+---@field ignore_file string?
+---@field ignored boolean?
 ---@field parent neotree.FileItemFilters?
 ---@field show_gitignored boolean?
+---@field show_ignored boolean?
 
 ---@class (exact) neotree.FileItemExtra
 ---@field status string? Git status
@@ -156,8 +159,9 @@ local create_item, set_parents
 ---@param _type neotree.Filetype?
 ---@param bufnr integer?
 ---@return neotree.FileItem
-function create_item(context, path, _type, bufnr)
-  local parent_path, name = utils.split_path(utils.normalize_path(path))
+local function create_item(context, path, _type, bufnr)
+  path = utils.normalize_path(path)
+  local parent_path, name = utils.split_path(path)
   name = name or ""
   local id = path
   if path == "[No Name]" and bufnr then
@@ -166,16 +170,17 @@ function create_item(context, path, _type, bufnr)
     id = tostring(bufnr)
   else
     -- avoid creating duplicate items
-    if context.folders[path] or context.nesting[path] or context.item_exists[path] then
-      return context.folders[path] or context.nesting[path] or context.item_exists[path]
+    local cached_item = context.folders[id] or context.nesting[id] or context.item_exists[id]
+    if cached_item then
+      return cached_item
     end
   end
 
   if _type == nil then
-    local stat = uv.fs_stat(path)
+    local stat = uv.fs_lstat(path)
     _type = stat and stat.type or "unknown"
   end
-  local is_reveal_target = (path == context.path_to_reveal)
+  local revealing_path = utils.truthy(context.path_to_reveal)
   ---@type neotree.FileItem
   local item = {
     id = id,
@@ -183,8 +188,8 @@ function create_item(context, path, _type, bufnr)
     parent_path = parent_path,
     path = path,
     type = _type,
-    is_reveal_target = is_reveal_target,
-    contains_reveal_target = is_reveal_target and utils.is_subpath(path, context.path_to_reveal),
+    is_reveal_target = revealing_path and (path == context.path_to_reveal),
+    contains_reveal_target = revealing_path and utils.is_subpath(path, context.path_to_reveal),
   }
   if utils.is_windows then
     if vim.fn.getftype(path) == "link" then
@@ -194,9 +199,12 @@ function create_item(context, path, _type, bufnr)
   if item.type == "link" then
     ---@cast item neotree.FileItem.Link
     item.is_link = true
-    item.link_to = uv.fs_realpath(path)
-    if item.link_to ~= nil then
-      item.type = uv.fs_stat(item.link_to).type
+    item.link_to = uv.fs_readlink(path)
+    if item.link_to then
+      local link_to_stat = uv.fs_stat(item.path)
+      if link_to_stat then
+        item.type = link_to_stat.type
+      end
     end
   end
   if item.type == "directory" then
@@ -292,16 +300,16 @@ function set_parents(context, item)
   end
   if parent == nil then
     local success
-    success, parent = pcall(create_item, context, item.parent_path, "directory")
+    success, parent = pcall(create_item, context, item.parent_path)
     if not success then
-      log.error("error creating item for ", item.parent_path)
+      log.error("Error creating item for ", item.parent_path, ":", parent)
     end
     ---@cast parent neotree.FileItem.Directory
     context.folders[parent.id] = parent
     set_parents(context, parent)
   end
   table.insert(parent.children, item)
-  context.item_exists[item.id] = true
+  context.item_exists[item.id] = item
 
   if not item.filtered_by and parent.filtered_by then
     item.filtered_by = {
@@ -313,9 +321,9 @@ end
 ---@class (exact) neotree.FileItemContext
 ---@field state neotree.State?
 ---@field folders table<string, neotree.FileItem.Directory|neotree.FileItem.Link?>
----@field nesting neotree.FileItem[]
----@field item_exists table<string, boolean?>
----@field all_items table<string, neotree.FileItem?>
+---@field nesting table<string, neotree.FileItem?>
+---@field item_exists table<string, neotree.FileItem?>
+---@field all_items neotree.FileItem[]?
 ---@field path_to_reveal string?
 
 ---Create context to be used in other file-items functions.

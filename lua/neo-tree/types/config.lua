@@ -38,7 +38,7 @@
 ---@field show_scrolled_off_parent_node boolean?
 ---@field sources neotree.Config.SourceSelector.Item[]?
 ---@field content_layout? "start"|"end"|"center"
----@field tabs_layout? "equal"|"start"|"end"|"center"|"focus"
+---@field tabs_layout? "equal"|"start"|"end"|"center"|"active"
 ---@field truncation_character string
 ---@field tabs_min_width integer?
 ---@field tabs_max_width integer?
@@ -123,7 +123,7 @@
 ---@field git_status_async_options neotree.Config.GitStatusAsync
 ---@field hide_root_node boolean
 ---@field retain_hidden_root_indent boolean
----@field log_level "trace"|"debug"|"info"|"warn"|"error"|"fatal"|nil
+---@field log_level neotree.Logger.Config.Level
 ---@field log_to_file boolean|string
 ---@field open_files_in_last_window boolean
 ---@field open_files_do_not_replace_types string[]

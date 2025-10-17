@@ -197,10 +197,10 @@ vim.pack.add({
     version = vim.version.range('3')
   },
   -- dependencies
-  "nvim-lua/plenary.nvim",
-  "MunifTanjim/nui.nvim",
+  "https://github.com/nvim-lua/plenary.nvim",
+  "https://github.com/MunifTanjim/nui.nvim",
   -- optional, but recommended
-  "nvim-tree/nvim-web-devicons",
+  "https://github.com/nvim-tree/nvim-web-devicons",
 })
 ```
 
@@ -322,6 +322,7 @@ require("neo-tree").setup({
       -- then these will never be used.
       default = "*",
       highlight = "NeoTreeFileIcon",
+      use_filtered_colors = true, -- Whether to use a different highlight when the file is filtered (hidden, dotfile, etc.).
     },
     modified = {
       symbol = "[+]",
@@ -329,6 +330,7 @@ require("neo-tree").setup({
     },
     name = {
       trailing_slash = false,
+      use_filtered_colors = true, -- Whether to use a different highlight when the file is filtered (hidden, dotfile, etc.).
       use_git_status_colors = true,
       highlight = "NeoTreeFileName",
     },
@@ -462,6 +464,13 @@ require("neo-tree").setup({
       visible = false, -- when true, they will just be displayed differently than normal items
       hide_dotfiles = true,
       hide_gitignored = true,
+      hide_ignored = true, -- hide files that are ignored by other gitignore-like files
+      -- other gitignore-like files, in descending order of precedence.
+      ignore_files = {
+        ".neotreeignore",
+        ".ignore",
+        -- ".rgignore"
+      },
       hide_hidden = true, -- only works on Windows for hidden files/directories
       hide_by_name = {
         --"node_modules"
